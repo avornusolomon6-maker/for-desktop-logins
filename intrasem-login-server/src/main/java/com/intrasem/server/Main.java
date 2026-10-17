@@ -10,26 +10,32 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Intrasem login server.
  *
- * The desktop app sends:  { "table_name": "administrator", "username": "...", "password": "..." }
+ * Two endpoints:
  *
- *   - Username or password wrong  -> "Wrong credentials." and the failed attempt is recorded
- *                                    (3 wrong passwords = account locked for 10 minutes).
- *   - Everything correct          -> the server returns the database details to the app.
+ * POST /school   { "school_code": "uhas" }
+ *     Looks the code up in YOUR registry table (schools). Found -> returns the school's full name, primary
+ *     colour and logo url. Not found -> "Invalid school code." The registry credentials never leave the server.
  *
- * The database details are kept in Render ENVIRONMENT VARIABLES (set once in the Render dashboard):
- *   DB_URL         jdbc:postgresql://YOUR-NEON-HOST/YOUR-DB-NAME?sslmode=require
- *   AUTH_DB_USER   database user the SERVER uses to check logins (never sent to anyone)
- *   AUTH_DB_PASS   its password
- *   APP_DB_USER    database user that is SENT to the desktop app after a correct login
- *   APP_DB_PASS    its password
+ * POST /login    { "school_code": "uhas", "table_name": "administrator", "username": "...", "password": "..." }
+ *     - School code has no database      -> "School code not found."
+ *     - Username or password wrong       -> "Wrong credentials." (3 wrong passwords = locked for 10 minutes)
+ *     - Everything correct               -> the server returns the database details to the app.
  *
- * For now you may use the same user and password for both pairs. Later, when you create a database
- * user that only has access to the tables the admins need, put it in APP_DB_USER / APP_DB_PASS.
- * Nothing else needs to change.
+ * Render ENVIRONMENT VARIABLES (set once in the Render dashboard):
+ *   DB_BASE_URL         jdbc:postgresql://YOUR-NEON-HOST        (no database name, no ?options)
+ *   DB_USER             the one database user shared by all schools (ipes_app)
+ *   DB_PASS             its password
+ *   REGISTRY_DB_URL     jdbc:postgresql://YOUR-NEON-HOST/registry?sslmode=require&prepareThreshold=0
+ *   REGISTRY_DB_USER    your own (owner) database user, used ONLY by this server for the schools table
+ *   REGISTRY_DB_PASS    its password
+ *
+ * Every school has its own database on the same Neon project, named after the school code
+ * in lowercase (for example school code "UHAS" -> database "uhas").
  */
 public class Main {
 
@@ -39,7 +45,6 @@ public class Main {
     // Table names can't be sent to the database as "?" values, so the server ONLY accepts these exact
     // names. Anything else is rejected. Both tables need the columns: pass_word, failed_attempts,
     // locked_until, status.
-    // "teachingandexams" is the central admin table (it has no school column).
     private static final Map<String, Table> ALLOWED_TABLES = Map.of(
             "administrator", new Table("admin_name", "school"),
             "teachingandexams", new Table("admin_name", null)
@@ -49,12 +54,16 @@ public class Main {
     private static final int LOCK_MINUTES = 10;
     private static final String WRONG = "Wrong credentials.";
 
+    // A school code may only contain lowercase letters, digits and underscores (2 to 20 characters).
+    // This protects the connection URL from anything unexpected.
+    private static final Pattern CODE = Pattern.compile("^[a-z0-9_]{2,20}$");
+
     // Used so that an unknown username takes as long to answer as a wrong password.
     private static final String DUMMY_HASH = BCrypt.hashpw("not-a-real-password", BCrypt.gensalt());
 
     public static void main(String[] args) {
         // Stop with a clear message if a setting is missing.
-        for (String name : new String[]{"DB_URL", "AUTH_DB_USER", "AUTH_DB_PASS", "APP_DB_USER", "APP_DB_PASS"}) {
+        for (String name : new String[]{"DB_BASE_URL", "DB_USER", "DB_PASS", "REGISTRY_DB_URL", "REGISTRY_DB_USER", "REGISTRY_DB_PASS"}) {
             env(name);
         }
 
@@ -62,6 +71,7 @@ public class Main {
         Javalin app = Javalin.create().start(port);
 
         app.get("/health", ctx -> ctx.result("ok"));
+        app.post("/school", Main::school);
         app.post("/login", Main::login);
 
         // Never show database error details to the app.
@@ -71,14 +81,52 @@ public class Main {
         });
     }
 
+    /** Checks a school code against the registry and returns the school's name, colour and logo url. */
+    private static void school(Context ctx) throws SQLException {
+        ctx.header("Cache-Control", "no-store");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+        String schoolCode = text(body.get("school_code")).trim().toLowerCase();
+
+        // Same answer for a badly written code and an unknown code.
+        if (!CODE.matcher(schoolCode).matches()) {
+            fail(ctx, 404, "Invalid school code.");
+            return;
+        }
+
+        try (Connection c = DriverManager.getConnection(env("REGISTRY_DB_URL"), env("REGISTRY_DB_USER"), env("REGISTRY_DB_PASS"));
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT school_code, full_name, primary_color, logo_url FROM clients WHERE LOWER(school_code) = ?")) {
+            ps.setString(1, schoolCode);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    fail(ctx, 404, "Invalid school code.");
+                    return;
+                }
+                ctx.json(Map.of(
+                        "school_code", text(rs.getString("school_code")).trim().toLowerCase(),
+                        "full_name", text(rs.getString("full_name")).trim(),
+                        "primary_color", text(rs.getString("primary_color")).trim(),
+                        "logo_url", text(rs.getString("logo_url")).trim()));
+            }
+        }
+    }
+
     private static void login(Context ctx) throws SQLException {
         ctx.header("Cache-Control", "no-store");
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body = ctx.bodyAsClass(Map.class);
+        String schoolCode = text(body.get("school_code")).trim().toLowerCase();
         String tableName = text(body.get("table_name")).trim();
         String username = text(body.get("username")).trim();
         String password = text(body.get("password"));
+
+        if (!CODE.matcher(schoolCode).matches()) {
+            fail(ctx, 400, "Invalid school code.");
+            return;
+        }
 
         Table t = ALLOWED_TABLES.get(tableName);
         if (t == null) {
@@ -90,6 +138,9 @@ public class Main {
             return;
         }
 
+        // The database name is the school code. prepareThreshold=0 keeps things safe with Neon's pooled connection.
+        String dbUrl = env("DB_BASE_URL") + "/" + schoolCode + "?sslmode=require&prepareThreshold=0";
+
         // tableName and the column names come from the allowed list above, never straight from the user.
         String schoolExpr = t.schoolCol() == null ? "'' AS school" : t.schoolCol() + " AS school";
         String where = " WHERE LOWER(" + t.nameCol() + ") = LOWER(?)";
@@ -98,7 +149,13 @@ public class Main {
                 + "(locked_until IS NOT NULL AND locked_until <= NOW()) AS lock_expired "
                 + "FROM " + tableName + where;
 
-        try (Connection c = DriverManager.getConnection(env("DB_URL"), env("AUTH_DB_USER"), env("AUTH_DB_PASS"))) {
+        try (Connection c = connectToSchool(dbUrl)) {
+
+            // 0. No database for this school code.
+            if (c == null) {
+                fail(ctx, 404, "School code not found.");
+                return;
+            }
 
             String storedHash = null, status = null, school = null;
             int failed = 0;
@@ -143,7 +200,6 @@ public class Main {
                 } else {
                     run(c, "UPDATE " + tableName + " SET failed_attempts = ?, locked_until = NULL" + where,
                             attempts, username);
-                    
                     fail(ctx, 401, WRONG + " Attempt " + attempts + " of " + MAX_ATTEMPTS + ".");
                 }
                 return;
@@ -155,18 +211,31 @@ public class Main {
                 return;
             }
 
-            // 5. Correct: clear the failed attempts (nothing else) and return the database details.
+            // 5. Correct: clear the failed attempts and return the database details.
             run(c, "UPDATE " + tableName + " SET failed_attempts = 0, locked_until = NULL" + where, username);
 
             ctx.json(Map.of(
-                    "db_url", env("DB_URL"),
-                    "db_user", env("APP_DB_USER"),
-                    "db_password", env("APP_DB_PASS"),
+                    "db_url", dbUrl,
+                    "db_user", env("DB_USER"),
+                    "db_password", env("DB_PASS"),
                     "school", school == null ? "" : school.trim()));
         }
     }
 
     // ---------------- small helpers ----------------
+
+    /** Opens the school's database. Returns null when no database with that name exists. */
+    private static Connection connectToSchool(String url) throws SQLException {
+        try {
+            return DriverManager.getConnection(url, env("DB_USER"), env("DB_PASS"));
+        } catch (SQLException e) {
+            String msg = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
+            if ("3D000".equals(e.getSQLState()) || (msg.contains("database") && msg.contains("does not exist"))) {
+                return null;
+            }
+            throw e;
+        }
+    }
 
     private static boolean passwordMatches(String plain, String hash) {
         if (hash == null || hash.isEmpty()) {
