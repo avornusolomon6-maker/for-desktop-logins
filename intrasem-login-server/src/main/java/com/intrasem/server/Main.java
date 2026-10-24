@@ -12,31 +12,6 @@ import java.sql.SQLException;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-/**
- * Intrasem login server.
- *
- * Two endpoints:
- *
- * POST /school   { "school_code": "uhas" }
- *     Looks the code up in YOUR registry table (schools). Found -> returns the school's full name, primary
- *     colour and logo url. Not found -> "Invalid school code." The registry credentials never leave the server.
- *
- * POST /login    { "school_code": "uhas", "table_name": "administrator", "username": "...", "password": "..." }
- *     - School code has no database      -> "School code not found."
- *     - Username or password wrong       -> "Wrong credentials." (3 wrong passwords = locked for 10 minutes)
- *     - Everything correct               -> the server returns the database details to the app.
- *
- * Render ENVIRONMENT VARIABLES (set once in the Render dashboard):
- *   DB_BASE_URL         jdbc:postgresql://YOUR-NEON-HOST        (no database name, no ?options)
- *   DB_USER             the one database user shared by all schools (ipes_app)
- *   DB_PASS             its password
- *   REGISTRY_DB_URL     jdbc:postgresql://YOUR-NEON-HOST/registry?sslmode=require&prepareThreshold=0
- *   REGISTRY_DB_USER    your own (owner) database user, used ONLY by this server for the schools table
- *   REGISTRY_DB_PASS    its password
- *
- * Every school has its own database on the same Neon project, named after the school code
- * in lowercase (for example school code "UHAS" -> database "uhas").
- */
 public class Main {
 
     /** The name of the column that holds the username, and (if the table has one) the school column. */
@@ -231,6 +206,9 @@ public class Main {
         } catch (SQLException e) {
             String msg = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
             if ("3D000".equals(e.getSQLState()) || (msg.contains("database") && msg.contains("does not exist"))) {
+                System.err.printf("3D000 url=%s thread=%s time=%s msg=%s%n",
+                        url, Thread.currentThread().getName(),
+                        java.time.Instant.now(), e.getMessage());
                 return null;
             }
             throw e;
