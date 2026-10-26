@@ -37,6 +37,10 @@ public class Main {
     private static final String DUMMY_HASH = BCrypt.hashpw("not-a-real-password", BCrypt.gensalt());
 
     public static void main(String[] args) {
+           app.exception(Exception.class, (e, ctx) -> {
+               e.printStackTrace();
+               ctx.status(500).json(Map.of("error", "Server error."));
+           });
             System.out.println("BUILD marker 2026-10-26-a");
         // Stop with a clear message if a setting is missing.
         for (String name : new String[]{"DB_BASE_URL", "DB_USER", "DB_PASS", "REGISTRY_DB_URL", "REGISTRY_DB_USER", "REGISTRY_DB_PASS"}) {
@@ -100,6 +104,8 @@ public class Main {
         String username = text(body.get("username")).trim();
         String password = text(body.get("password"));
 
+           System.out.println("login school_code raw=[" + body.get("school_code") + "] table=[" + body.get("table_name") + "]");
+
         if (!CODE.matcher(schoolCode).matches()) {
             fail(ctx, 400, "Invalid school code.");
             return;
@@ -125,11 +131,13 @@ public class Main {
                 + "(locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked, "
                 + "(locked_until IS NOT NULL AND locked_until <= NOW()) AS lock_expired "
                 + "FROM " + tableName + where;
-
+        
+           System.out.println("login dbUrl=" + dbUrl);
         try (Connection c = connectToSchool(dbUrl)) {
 
             // 0. No database for this school code.
             if (c == null) {
+                System.out.println("login: connectToSchool returned null for " + dbUrl);
                 fail(ctx, 404, "School code not found.");
                 return;
             }
