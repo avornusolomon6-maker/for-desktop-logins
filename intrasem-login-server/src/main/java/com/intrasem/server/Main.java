@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 public class Main {
-    System.out.println("BUILD marker 2026-10-26-a");
 
     /** The name of the column that holds the username, and (if the table has one) the school column. */
     private record Table(String nameCol, String schoolCol) {}
@@ -38,6 +37,7 @@ public class Main {
     private static final String DUMMY_HASH = BCrypt.hashpw("not-a-real-password", BCrypt.gensalt());
 
     public static void main(String[] args) {
+            System.out.println("BUILD marker 2026-10-26-a");
         // Stop with a clear message if a setting is missing.
         for (String name : new String[]{"DB_BASE_URL", "DB_USER", "DB_PASS", "REGISTRY_DB_URL", "REGISTRY_DB_USER", "REGISTRY_DB_PASS"}) {
             env(name);
