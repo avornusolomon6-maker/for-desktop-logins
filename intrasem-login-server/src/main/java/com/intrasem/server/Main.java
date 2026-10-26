@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 public class Main {
+    System.out.println("BUILD marker 2026-10-26-a");
 
     /** The name of the column that holds the username, and (if the table has one) the school column. */
     private record Table(String nameCol, String schoolCol) {}
@@ -89,6 +90,7 @@ public class Main {
     }
 
     private static void login(Context ctx) throws SQLException {
+        System.out.println("login hit");
         ctx.header("Cache-Control", "no-store");
 
         @SuppressWarnings("unchecked")
