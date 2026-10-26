@@ -36,30 +36,37 @@ public class Main {
     // Used so that an unknown username takes as long to answer as a wrong password.
     private static final String DUMMY_HASH = BCrypt.hashpw("not-a-real-password", BCrypt.gensalt());
 
-    public static void main(String[] args) {
-           app.exception(Exception.class, (e, ctx) -> {
-               e.printStackTrace();
-               ctx.status(500).json(Map.of("error", "Server error."));
-           });
-            System.out.println("BUILD marker 2026-10-26-a");
-        // Stop with a clear message if a setting is missing.
-        for (String name : new String[]{"DB_BASE_URL", "DB_USER", "DB_PASS", "REGISTRY_DB_URL", "REGISTRY_DB_USER", "REGISTRY_DB_PASS"}) {
-            env(name);
-        }
+public static void main(String[] args) {
+    System.out.println("BUILD marker 2026-10-26-a");
 
-        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
-        Javalin app = Javalin.create().start(port);
-
-        app.get("/health", ctx -> ctx.result("ok"));
-        app.post("/school", Main::school);
-        app.post("/login", Main::login);
-
-        // Never show database error details to the app.
-        app.exception(SQLException.class, (e, ctx) -> {
-            e.printStackTrace();
-            ctx.status(500).json(Map.of("error", "Server error. Please try again."));
-        });
+    // Stop with a clear message if a setting is missing.
+    for (String name : new String[]{"DB_BASE_URL", "DB_USER", "DB_PASS", "REGISTRY_DB_URL", "REGISTRY_DB_USER", "REGISTRY_DB_PASS"}) {
+        env(name);
     }
+
+    int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
+
+    // Create the app first (don't start it yet) so handlers can be registered before it runs.
+    Javalin app = Javalin.create();
+
+    app.get("/health", ctx -> ctx.result("ok"));
+    app.post("/school", Main::school);
+    app.post("/login", Main::login);
+
+    // Never show database error details to the app.
+    app.exception(SQLException.class, (e, ctx) -> {
+        e.printStackTrace();
+        ctx.status(500).json(Map.of("error", "Server error. Please try again."));
+    });
+
+    // Anything else unexpected: print the stack trace to Render's logs.
+    app.exception(Exception.class, (e, ctx) -> {
+        e.printStackTrace();
+        ctx.status(500).json(Map.of("error", "Server error."));
+    });
+
+    app.start(port);
+}
 
     /** Checks a school code against the registry and returns the school's name, colour and logo url. */
     private static void school(Context ctx) throws SQLException {
