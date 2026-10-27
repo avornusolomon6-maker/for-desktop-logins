@@ -84,7 +84,7 @@ public static void main(String[] args) {
 
         try (Connection c = DriverManager.getConnection(env("REGISTRY_DB_URL"), env("REGISTRY_DB_USER"), env("REGISTRY_DB_PASS"));
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT school_code, full_name, primary_color, logo_url FROM clients WHERE LOWER(school_code) = ?")) {
+                     "SELECT school_code, full_name, primary_color, logo_url, school_motto, school_adrress, school_phone, school_email, school_website FROM clients WHERE LOWER(school_code) = ?")) {
             ps.setString(1, schoolCode);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -95,7 +95,12 @@ public static void main(String[] args) {
                         "school_code", text(rs.getString("school_code")).trim().toLowerCase(),
                         "full_name", text(rs.getString("full_name")).trim(),
                         "primary_color", text(rs.getString("primary_color")).trim(),
-                        "logo_url", text(rs.getString("logo_url")).trim()));
+                        "logo_url", text(rs.getString("logo_url")).trim(),
+                        "school_motto", text(rs.getString("school_motto")).trim(),
+                        "school_adrress", text(rs.getString("school_adrress")).trim(),
+                        "school_phone", text(rs.getString("school_phone")).trim(),
+                        "school_email", text(rs.getString("school_email")).trim(),
+                        "school_website", text(rs.getString("school_website")).trim()));
             }
         }
     }
