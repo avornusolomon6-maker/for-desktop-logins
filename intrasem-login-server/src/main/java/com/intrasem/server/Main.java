@@ -84,7 +84,7 @@ public static void main(String[] args) {
 
         try (Connection c = DriverManager.getConnection(env("REGISTRY_DB_URL"), env("REGISTRY_DB_USER"), env("REGISTRY_DB_PASS"));
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT school_code, full_name, primary_color, logo_url, school_motto, school_adrress, school_phone, school_email, school_website FROM clients WHERE LOWER(school_code) = ?")) {
+                     "SELECT school_code, full_name, primary_color, logo_url, school_motto, school_address, school_phone, school_email, school_website FROM clients WHERE LOWER(school_code) = ?")) {
             ps.setString(1, schoolCode);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
