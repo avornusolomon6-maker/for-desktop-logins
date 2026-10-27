@@ -97,7 +97,7 @@ public static void main(String[] args) {
                         "primary_color", text(rs.getString("primary_color")).trim(),
                         "logo_url", text(rs.getString("logo_url")).trim(),
                         "school_motto", text(rs.getString("school_motto")).trim(),
-                        "school_adrress", text(rs.getString("school_adrress")).trim(),
+                        "school_address", text(rs.getString("school_address")).trim(),
                         "school_phone", text(rs.getString("school_phone")).trim(),
                         "school_email", text(rs.getString("school_email")).trim(),
                         "school_website", text(rs.getString("school_website")).trim()));
