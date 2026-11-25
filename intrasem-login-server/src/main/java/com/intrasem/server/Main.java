@@ -219,6 +219,105 @@ public static void main(String[] args) {
         }
     }
 
+    private static void resetpass(Context ctx) throws SQLException {
+        System.out.println("resetpass hit");
+        ctx.header("Cache-Control", "no-store");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = ctx.bodyAsClass(Map.class);
+        String schoolCode = text(body.get("school_code")).trim().toLowerCase();
+        String tableName = text(body.get("table_name")).trim();
+        String username = text(body.get("username")).trim();
+        String password = text(body.get("password"));
+
+           System.out.println("resetpass school_code raw=[" + body.get("school_code") + "] table=[" + body.get("table_name") + "]");
+
+        if (!CODE.matcher(schoolCode).matches()) {
+            fail(ctx, 400, "Invalid school code.");
+            return;
+        }
+
+        Table t = ALLOWED_TABLES.get(tableName);
+        if (t == null) {
+            fail(ctx, 400, "Invalid request.");
+            return;
+        }
+        if (username.isEmpty() || password.isEmpty()) {
+            fail(ctx, 400, "Username and password are required.");
+            return;
+        }
+
+        // The database name is the school code. prepareThreshold=0 keeps things safe with Neon's pooled connection.
+        String dbUrl = env("DB_BASE_URL") + "/" + schoolCode + "?sslmode=require&prepareThreshold=0";
+
+        // tableName and the column names come from the allowed list above, never straight from the user.
+        String schoolExpr = t.schoolCol() == null ? "'' AS school" : t.schoolCol() + " AS school";
+        String where = " WHERE LOWER(" + t.nameCol() + ") = LOWER(?)";
+        String select = "SELECT pass_word, failed_attempts, status, " + schoolExpr + ", "
+                + "(locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked, "
+                + "(locked_until IS NOT NULL AND locked_until <= NOW()) AS lock_expired "
+                + "FROM " + tableName + where;
+        
+           System.out.println("resetpass dbUrl=" + dbUrl);
+        try (Connection c = connectToSchool(dbUrl)) {
+
+            // 0. No database for this school code.
+            if (c == null) {
+                System.out.println("resetpass: connectToSchool returned null for " + dbUrl);
+                fail(ctx, 404, "School code not found.");
+                return;
+            }
+
+            String storedHash = null, status = null, school = null;
+            int failed = 0;
+            boolean found = false, isLocked = false, lockExpired = false;
+
+            try (PreparedStatement ps = c.prepareStatement(select)) {
+                ps.setString(1, username);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        found = true;
+                        storedHash = rs.getString("pass_word");
+                        status = rs.getString("status");
+                        school = rs.getString("school");
+                        failed = rs.getInt("failed_attempts");
+                        isLocked = rs.getBoolean("is_locked");
+                        lockExpired = rs.getBoolean("lock_expired");
+                    }
+                }
+            }
+
+            // 1. No such user. Same answer as a wrong password, so nobody can find out which usernames exist.
+            if (!found) {
+                BCrypt.checkpw(password, DUMMY_HASH);
+                fail(ctx, 401, "User not found");
+                return;
+            }
+
+            // 2. Account is locked.
+            if (isLocked) {
+                fail(ctx, 423, "Account is locked, please try again later.");
+                return;
+            }
+            
+            // 4. Account has been deactivated: no database details.
+            if (status != null && status.equalsIgnoreCase("Inactive")) {
+                fail(ctx, 403, "Account was deactivated. Please contact the support team.");
+                return;
+            }
+
+            // 5. Correct: clear the failed attempts and return the database details.
+            runpass(c, "UPDATE " + tableName + " SET pass_word = ?" + where, password, username);
+
+            ctx.json(Map.of(
+                    "db_url", dbUrl,
+                    "db_user", env("DB_USER"),
+                    "db_password", env("DB_PASS"),
+                    "school", school == null ? "" : school.trim()));
+        }
+    }
+
+
     // ---------------- small helpers ----------------
 
     /** Opens the school's database. Returns null when no database with that name exists. */
@@ -248,6 +347,15 @@ public static void main(String[] args) {
             return BCrypt.checkpw(plain, hash);
         } catch (IllegalArgumentException e) {    // stored value is not a valid BCrypt hash
             return false;
+        }
+    }
+    
+    private static void runpass(Connection c, String sql, String password, String username) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            
+            ps.setObject(1, password);
+            ps.setObject(2, username);
+            ps.executeUpdate();
         }
     }
 
