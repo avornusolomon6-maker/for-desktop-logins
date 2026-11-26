@@ -52,6 +52,8 @@ public static void main(String[] args) {
     app.get("/health", ctx -> ctx.result("ok"));
     app.post("/school", Main::school);
     app.post("/login", Main::login);
+    app.post("/resetpass", Main::resetpass);
+
 
     // Never show database error details to the app.
     app.exception(SQLException.class, (e, ctx) -> {
